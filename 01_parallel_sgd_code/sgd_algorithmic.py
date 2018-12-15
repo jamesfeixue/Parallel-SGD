@@ -36,20 +36,43 @@ class GradientDescent:
 		-multiclass
 		-Hogwild!
 
+	TODO: 
+		1. add intercept
+		2. add tree based consolidation
+		3. run and verify
+		4. compare with SGDClassifier
+
 	"""
 
 	sgd_algorithmic_kernel_code = """
 		#include <stdio.h>
 	    #include <math.h>
-	    __global__ void SGD_algorithmic()
+	    __global__ void SGD_algorithmic(float *X_train, float *y_train, float *weights, float *eta, int rows)
 	    {
 
+	    //initialize -------------
+	    int tx = threadIdx.x; 
+	    int bx = blockDimx * blockIdx.x + tx; 
+	    const int data_rows = rows; 
+	    const in data_dimension = 784; 
 
-	    //put weights in shared memory
+	    //put weights in shared memory ----------
+	    __shared__ float weight_shared[10][data_dimension]; 
+	    __shared__ float temp_weights[10][data_dimension]; 
+
+	    for (int i = 0; i<10; i++){
+	    	if (tx < data_dimension){
+	    		weight_shared[i][tx] = weights[i*data_dimension + tx]; 
+	    	}
+	    	__syncthreads(); 
+	    }
+	    __syncthreads(); 
 
 	    // calculate dot product for each class
 	    // do addition with tree struction
+	    if (tx < data_dimension) {
 
+	    }
 
 
 	    //sgd formula
@@ -88,7 +111,7 @@ class GradientDescent:
 
     	#initialize weight array (1-d array with size of columns)
     	if weights is None: 
-	    	weights = (np.random.rand(columns, 10)).astype(np.float32) 
+	    	weights = (np.random.rand(10, columns)).astype(np.float32) 
 	    	weights_gpu = gpuarray.to_gpu(weights) 
 	    	print("weights: ", weights)
 	    else: 
@@ -116,7 +139,7 @@ class GradientDescent:
     	end = cuda.Event() 
 
     	start.record() 
-    	evt(self.X_train_gpu, self.y_train_gpu, eta0, rows, block=(columns, 1, 1))
+    	evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, eta0, rows, block=(columns, 1, 1))
     	end.record() 
     	end.synchronize() 
 
@@ -143,7 +166,7 @@ Testing and Plotting
 
 if __name__ == '__main__':
 
-    weights = (np.random.rand(columns, 10)).astype(np.float32)
+    weights = (np.random.rand(10, columns)).astype(np.float32)
     times_sgd_algorithmic = [0]
     times_sgd_algorithmic_whole = [0]
     accuracies = [0]

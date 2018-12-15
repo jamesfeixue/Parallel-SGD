@@ -22,14 +22,6 @@ y_test = mnist.test.labels
 
 
 class GradientDescent: 
-	NAME = 'NVIDIA CUDA'
-    platforms = cl.get_platforms()
-    devs = None
-    for platform in platforms:
-        if platform.name == NAME:
-            devs = platform.get_devices()
-    ctx = cl.Context(devs)
-    queue = cl.CommandQueue(ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
 
     tile_x = np.int(784)
 

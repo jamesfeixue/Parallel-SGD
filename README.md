@@ -1,1 +1,1 @@
-# parallel-sgd
+# Parallel Stochastic Gradient Descent

@@ -1,0 +1,9 @@
+data/
+.DS_Store
+MNIST_data/* 
+*.swp 
+*.DS_store
+*.ipynb_checkpoints/ 
+*.vscode 
+models/* 
+

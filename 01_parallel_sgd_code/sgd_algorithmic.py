@@ -56,9 +56,12 @@ class GradientDescent:
 	    const int data_rows = rows; 
 	    const in data_dimension = 784; 
 
+	    //I think a loop needs to be here 
+	    //==> 
 	    //put weights in shared memory ----------
 	    __shared__ float weight_shared[10][data_dimension]; 
-	    __shared__ float temp_weights[10][data_dimension]; 
+	    __shared__ float temp_dot_product[10][data_dimension]; 
+	    __shared__ float y_hat[10]; 
 
 	    for (int i = 0; i<10; i++){
 	    	if (tx < data_dimension){
@@ -70,12 +73,56 @@ class GradientDescent:
 
 	    // calculate dot product for each class
 	    // do addition with tree struction
-	    if (tx < data_dimension) {
+	    for (int j = 0; j<10; j++){
+	    	if (tx < data_dimension) {
+	    		temp_dot_product = weight_shared[j][tx] * X_train[bx];  //check this is right
+	    	}
+	    	__syncthreads(); 
+	    }
+	    __syncthreads(); 
+
+	    for (int j = 0; j<10; j++){
+		    for (int maximum = blockDim.x; maximum>0; maximum = (maximum+1)/2){
+		    	if (tx <= maximum/2 && (2*tx+1) <= maximum){
+		    		temp_dot_product[j][tx] = temp_dot_product[j][2*tx] + temp_dot_product[j][2*tx+1];  
+		    	}
+		    	__syncthreads(); 
+		    	if (tx <= maximum/2 && (2*tx+1) = maximum){
+		    		temp_dot_product[j][tx] = temp_dot_product[j][2*tx]
+		    	}
+		    	__syncthreads(); 
+		    }
+		    __syncthreads(); 
+		}
+		__syncthreads(); 
+
+	    //we have the dot product of 
+	    //sgd formula
+	    float e = 2.718281828459;
+	    if (tx = 0){
+	    	for (int k = 0; k<10; k++){
+
+	    		//current y_train
+		    	int current_y_train_index = blockIdx.x; 
+		    	float current_y_train = y_train[current_y_train_index];
+
+		    	//convert to 0/1
+		    	if (current_y_train == k){
+		    		float y_star = 1; 
+		    	}
+		    	if (current_y_train != k){
+		    		float y_star = 0; 
+		    	}
+
+		    	//get y_hat 
+		    	y_hat[j] = 1/(1+powf(e, -1*temp_dot_product[k][tx])); 
+		    }
 
 	    }
 
-
-	    //sgd formula
+	    //update weights 
+	    //double check this is correct
+	    
 
 
 

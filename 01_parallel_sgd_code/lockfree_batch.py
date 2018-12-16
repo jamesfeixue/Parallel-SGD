@@ -94,9 +94,10 @@ class GradientDescent:
 				
 				coefficients[ty][tx] = coefficient; 
 
+				/*
 				if (tx < 5 && y_star == 1){
 					printf("ty: %i, current_y_train %i, y_star %i, coef %f, dot %f \\n", ty, current_y_train, y_star, coefficient, temp_dot_product); 
-				}
+				}*/
 
 				for (int i=0; i<data_dimension; i++){
 					weight_shared[ty][i] += coefficient * X_train[data_dimension * (data+tx) + i]; 
@@ -194,8 +195,8 @@ Testing and Plotting
 
 if __name__ == '__main__':
 	#parameters
-	epochs = 5
-	eta = np.float32(1) 
+	epochs = 100
+	eta = np.float32(0.01) 
 
 	columns = int(X_train.shape[1])
 	weights = np.float32(np.zeros((10, columns)))
@@ -231,15 +232,15 @@ if __name__ == '__main__':
                         eta0=0.01, 
 						learning_rate='constant')
 
-	# param_range = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-	param_range = range(1, 3)
+	param_range = [1, 10, 20, 30, 40, 50, 100]
+	# param_range = range(1, 3)
 
 	times = [] 
 	train_scores = [] 
 	test_scores = [] 
 	for iteration in param_range: 
 		sgd_temp = SGDClassifier(loss = 'log',penalty='none', 
-								tol=0.000001, eta0=0.01, 
+								tol=0.00000000001, eta0=0.01, 
 								learning_rate='constant', 
 								max_iter = iteration, 
 								fit_intercept=False)
@@ -264,13 +265,13 @@ if __name__ == '__main__':
 	plt.title('SGD batch accuracies')
 	plt.plot(sizes, accuracies, 'g--', label='parallel')
 	plt.plot(param_range, test_scores, 'b--', label='sklearn-serial')
-	plt.ylim(0.88, 0.925)
+	plt.ylim(0.7, 0.925)
 	plt.xlabel('iteration')
 	plt.ylabel('accuracy')
 	plt.legend(loc='upper left')
 	plt.tight_layout()
 
 	plt.rcParams["figure.figsize"] = [8, 8]
-	plt.savefig('sgd_batch_1.png')
+	plt.savefig('sgd_batch_2.png')
 
 	#plot side by size with benchmark

@@ -98,15 +98,29 @@ class GradientDescent:
 					printf("ty: %i, current_y_train %i, y_star %i, coef %f, dot %f \\n", ty, current_y_train, y_star, coefficient, temp_dot_product); 
 				}
 
-				for (int i=0; i<data_dimension; i++){
-					weight_shared[ty][i] += coefficient * X_train[data_dimension * (data+tx) + i]; 
-				}
-
 				__syncthreads(); 
 
 			}
-		}
 
+			for (int start = 0; start<data_dimension; start+=32){
+				float temp_batch = 0.0;
+				for (int j=0; j<32; j++){
+					//tx corresponds to x element dim
+					//j corresponds to each member of the batch
+					if (start+j < data_dimension){
+						temp_batch += coefficients[ty][j] * X_train[(data+tx)*data_dimension+start+j]; 
+					} 
+				}
+
+				if (tx < 5){
+					//printf("%f \\n", temp_batch); 
+				}
+
+				weight_shared[ty][start+tx] = temp_batch; 
+			}
+			__syncthreads(); 
+		}
+	
 		//write weights back
 		for (int n = 0; n<data_dimension; n++){
 			if (ty < 10){

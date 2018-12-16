@@ -51,18 +51,17 @@ class GradientDescent:
 
 		//initialize -------------
 		int tx = threadIdx.x;
-		int bx = blockDim.x * blockIdx.x + tx;
+		int bx = blockDim.x * blockIdx.y + tx;
 		const int data_rows = rows;
 		const int data_dimension = 784;
 		float e = 2.718281828459;
 
-		printf("%d", blockIdx.x); 
 		//put weights in shared memory ----------
 		__shared__ float weight_shared[10][data_dimension];
 
-		for (int i = 0; i<10; i++){
-			if (tx < data_dimension){
-				weight_shared[i][tx] = weights[i*data_dimension + tx];
+		for (int i = 0; i<data_dimension; i++){
+			if (tx < 10){
+				weight_shared[tx][i] = weights[tx*data_dimension + i];
 			}
 		}
 		__syncthreads();
@@ -72,36 +71,39 @@ class GradientDescent:
 		// tx should be between 0 and 9
 		// not truly random since you can't call rand() inside pycuda kernel
 
-		float temp_dot_product = 0.0; 
-		int rand_array[20]; 
-		for (int i=0; i<20; i++){
-			int rand_temp = (bx * 9239 + i) % 784;   
-			rand_array[i] = rand_temp; 
-			temp_dot_product += weight_shared[tx][rand_temp] * X_train[blockDim.x * blockIdx.x + rand_temp]; 
+		for (int data=0; data<data_rows; data++){
+			float temp_dot_product = 0.0; 
+			int rand_array[30]; 
+			for (int i=0; i<30; i++){
+				int rand_temp = (data * 9239 + i) % 784;   
+				rand_array[i] = rand_temp; 
+				temp_dot_product += weight_shared[tx][rand_temp] * X_train[data_dimension * data + rand_temp]; 
+			}
+
+			int y_star = 1; 
+			int current_y_train = y_train[data]; 
+			if (current_y_train != tx){ 
+				y_star = 0;
+			}
+
+			//get y_hat 
+			float y_hat = 1.0/(1.0+powf(e, (-1.0*temp_dot_product)));
+
+			//get coefficient
+			float coefficients = eta * (y_star - y_hat)*y_hat*(1.0-y_hat);
+
+			for (int i=0; i<20; i++){
+				int rand_curr = rand_array[i]; 
+				weight_shared[tx][rand_curr] += coefficients * X_train[data_dimension * data + rand_curr]; 
+			}
+			__syncthreads(); 
 		}
 
-		int y_star = 1; 
-		int current_y_train = y_train[blockIdx.x]; 
-		if (current_y_train != tx){ 
-			y_star = 0;
-		}
-
-		//get y_hat 
-		float y_hat = 1.0/(1.0+powf(e, (-1.0*temp_dot_product)));
-
-		//get coefficient
-		float coefficients = eta * (y_star - y_hat)*y_hat*(1.0-y_hat);
-
-		for (int i=0; i<20; i++){
-			int rand_curr = rand_array[i]; 
-			weight_shared[tx][i] += coefficients * X_train[blockDim.x * blockIdx.x+rand_curr]; 
-		}
-		__syncthreads(); 
-
+	
 		//write weights back
-		for (int n = 0; n<10; n++){
-			if (tx < data_dimension){
-				output[n*data_dimension + tx] = weight_shared[n][tx];
+		for (int n = 0; n<data_dimension; n++){
+			if (tx < 10){
+				output[tx*data_dimension + n] = weight_shared[tx][n];
 			}
 		}
 		}
@@ -122,8 +124,10 @@ class GradientDescent:
 
 	def sgd_lockfree(self, X_train, y_train, eta0, weights=None):
 		#get data size
-		rows = X_train.shape[0]
+		rows = np.int32(X_train.shape[0])
 		columns = X_train.shape[1]
+		classes = 10
+		eta = np.float32(eta0)
 		# print("row: ", rows, "columns :", columns)
 
 		#initialize weight array (1-d array with size of columns)
@@ -140,17 +144,6 @@ class GradientDescent:
 		output = np.empty_like(weights)
 		output_gpu = gpuarray.to_gpu(output)
 
-		#set block size
-		#assuming the data is mnist, we want a block to be 1x*columns
-		#the grid size will then be *rows
-		#[thread thread thread thread]
-		block_x = columns
-		block_y = 1
-
-		#set grid size
-		grid_x = rows
-		grid_y = 1
-
 		#timing event
 		evt = GradientDescent.prg_sgd_lockfree.get_function("SGD_lockfree")
 
@@ -158,9 +151,12 @@ class GradientDescent:
 		end = cuda.Event()
 
 		start.record()
-		evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, output_gpu, eta0, rows, 
-			block=(10, 1, 1), 
-			grid=(55000, 1, 1))
+		evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, output_gpu, 
+			eta, rows, 
+			block = (10, 1, 1))
+
+		#float *X_train, int *y_train, float *weights, float *output, float eta, int rows
+
 		end.record()
 		end.synchronize()
 
@@ -191,8 +187,8 @@ Testing and Plotting
 
 if __name__ == '__main__':
 	#parameters
-	epochs = 10
-	eta = np.float32(0.01) 
+	epochs = 100
+	eta = np.float32(1) 
 
 	columns = int(X_train.shape[1])
 	weights = np.float32(np.zeros((10, columns)))
@@ -261,7 +257,7 @@ if __name__ == '__main__':
 	plt.title('SGD lockffree accuracies')
 	plt.plot(sizes, accuracies, 'g--', label='parallel')
 	plt.plot(param_range, test_scores, 'b--', label='sklearn-serial')
-	plt.ylim(0.89, 0.925)
+	# plt.ylim(0.5, 0.925)
 	plt.xlabel('iteration')
 	plt.ylabel('accuracy')
 	plt.legend(loc='upper left')

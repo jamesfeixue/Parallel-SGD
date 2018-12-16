@@ -43,101 +43,71 @@ class GradientDescent:
 		-Hogwild!
 	"""
 
-	sgd_algorithmic_kernel_code = """
+	sgd_multiclass_kernel_code = """
 		#include <stdio.h>
 		#include <math.h>
-		__global__ void SGD_algorithmic(float *X_train, int *y_train, float *weights, float *output, float eta, int rows)
+		__global__ void SGD_multiclass(float *X_train, int *y_train, float *weights, float *output, float eta, int rows)
 		{
 
 		//initialize -------------
 		int tx = threadIdx.x;
-		//int bx = blockDim.x * blockIdx.x + tx;
+		int bx = blockDim.x * blockIdx.y + tx;
 		const int data_rows = rows;
 		const int data_dimension = 784;
 		float e = 2.718281828459;
 
 		//put weights in shared memory ----------
 		__shared__ float weight_shared[10][data_dimension];
-		__shared__ float temp_dot_product[data_dimension];
-		__shared__ float y_hat[10];
-		__shared__ float coefficients[10];
 
-		for (int i = 0; i<10; i++){
-			if (tx < data_dimension){
-				weight_shared[i][tx] = weights[i*data_dimension + tx];
+		for (int i = 0; i<data_dimension; i++){
+			if (tx < 10){
+				weight_shared[tx][i] = weights[tx*data_dimension + i];
 			}
 		}
 		__syncthreads();
 
-		//loop==>
+		// calculate dot product for each class
+		// 10 threads for 10 classes
+		// tx should be between 0 and 9
+		// not truly random since you can't call rand() inside pycuda kernel
+
 		for (int data=0; data<data_rows; data++){
-			int X_beginning = data * data_dimension;
-
-			// calculate dot product for each class
-			// do addition with tree struction
-			for (int j = 0; j<10; j++){
-				if (tx < data_dimension) {
-					temp_dot_product[tx] = weight_shared[j][tx] * X_train[X_beginning+tx];  //check this is right
-				}
-				__syncthreads(); 
-
-				for (int maximum = blockDim.x; maximum>1; maximum = (maximum+1)/2){
-					if (tx <= maximum/2 && (2*tx+1) <= maximum){
-						temp_dot_product[tx] = temp_dot_product[2*tx] + temp_dot_product[2*tx+1];
-					}
-					__syncthreads();
-					if (tx <= maximum/2 && (2*tx+1) == maximum){
-						temp_dot_product[tx] = temp_dot_product[2*tx];
-					}
-					__syncthreads();
-				}
-
-				int y_star = 1;
-				
-				//current y_train
-				int current_y_train = y_train[data];
-
-				//convert to 0/1
-				if (current_y_train != j){ //error here
-					y_star = 0;
-				}
-
-				//get y_hat
-				y_hat[j] = 1.0/(1.0+powf(e, (-1.0*temp_dot_product[0])) ); 
-				coefficients[j] = eta * (y_star - y_hat[j])*y_hat[j]*(1.0-y_hat[j]); //enum type 
-				
-				if (tx < 5 && data<5){
-					//printf("%d, %d, %d, %d, %d, %d \\n", y_train[0], y_train[1], y_train[2], y_train[3], y_train[4], y_train[5]); 
-					//printf("y_train: %d, j: %d, y_star: %d, y_hat, %f, coefficient: %f \\n|", current_y_train, j, y_star, y_hat[j], coefficients[j]);
-				}	
-
-				if (tx < data_dimension){
-					weight_shared[j][tx] = weight_shared[j][tx] + coefficients[j]*X_train[X_beginning+tx]; 
-					
-					/* coefficients are really small
-					if (tx < 10){
-						if (coefficients[j]>0){
-							printf("%f, %f |", coefficients[j], X_train[X_beginning+tx]);
-						}
-					}	
-					*/
-				}
-				__syncthreads(); 
+			float temp_dot_product = 0.0; 
+			int rand_array[30]; 
+			for (int i=0; i<data_dimension; i++){
+				temp_dot_product += weight_shared[tx][i] * X_train[data_dimension * data + i]; 
 			}
-			__syncthreads();
 
+			int y_star = 1; 
+			int current_y_train = y_train[data]; 
+			if (current_y_train != tx){ 
+				y_star = 0;
+			}
+
+			//get y_hat 
+			float y_hat = 1.0/(1.0+powf(e, (-1.0*temp_dot_product)));
+
+			//get coefficient
+			float coefficients = eta * (y_star - y_hat)*y_hat*(1.0-y_hat);
+
+			for (int i=0; i<data_dimension; i++){
+				weight_shared[tx][i] += coefficients * X_train[data_dimension * data + i]; 
+			}
+			__syncthreads(); 
 		}
+
+	
 		//write weights back
-		for (int n = 0; n<10; n++){
-			if (tx < data_dimension){
-				output[n*data_dimension + tx] = weight_shared[n][tx];
+		for (int n = 0; n<data_dimension; n++){
+			if (tx < 10){
+				output[tx*data_dimension + n] = weight_shared[tx][n];
 			}
 		}
 		}
 
 		"""
 	
-	prg_sgd_algorithmic = SourceModule(sgd_algorithmic_kernel_code)
+	prg_sgd_multiclass = SourceModule(sgd_multiclass_kernel_code)
 
 	def __init__(self):
 		self.X_train_gpu = None
@@ -149,10 +119,12 @@ class GradientDescent:
 		if self.y_train_gpu is None:
 			self.y_train_gpu = gpuarray.to_gpu(y_train)
 
-	def sgd_algorithmic(self, X_train, y_train, eta0, weights=None):
+	def sgd_multiclass(self, X_train, y_train, eta0, weights=None):
 		#get data size
 		rows = np.int32(X_train.shape[0])
 		columns = X_train.shape[1]
+		classes = 10
+		eta = np.float32(eta0)
 		# print("row: ", rows, "columns :", columns)
 
 		#initialize weight array (1-d array with size of columns)
@@ -169,28 +141,19 @@ class GradientDescent:
 		output = np.empty_like(weights)
 		output_gpu = gpuarray.to_gpu(output)
 
-		#set block size
-		#assuming the data is mnist, we want a block to be 1x*columns
-		#the grid size will then be *rows
-		#[thread thread thread thread]
-		block_x = columns
-		block_y = 1
-
-		#set grid size
-		grid_x = rows
-		grid_y = 1
-
 		#timing event
-		evt = GradientDescent.prg_sgd_algorithmic.get_function("SGD_algorithmic")
+		evt = GradientDescent.prg_sgd_multiclass.get_function("SGD_multiclass")
 
 		start = cuda.Event()
 		end = cuda.Event()
 
 		start.record()
 		evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, output_gpu, 
-			eta0, rows, 
-			block=(columns, 1, 1), 
-			grid = (1, 1, 1))
+			eta, rows, 
+			block = (10, 1, 1))
+
+		#float *X_train, int *y_train, float *weights, float *output, float eta, int rows
+
 		end.record()
 		end.synchronize()
 
@@ -222,30 +185,26 @@ Testing and Plotting
 if __name__ == '__main__':
 	#parameters
 	epochs = 100
-	eta = np.float32(0.01) 
+	eta = np.float32(1) 
 
 	columns = int(X_train.shape[1])
 	weights = np.float32(np.zeros((10, columns)))
-	times_sgd_algorithmic = [0]
-	times_sgd_algorithmic_whole = [0]
+	times_sgd = [0]
 	accuracies = [0]
 
 	# print(weights)
 
 	i = 1
 	while i < epochs:
-		#find times and accuracies for 99 epoches for sgd_algorithmic
+		#find times and accuracies for 99 epoches for sgd_multiclass
 		gradient_descent = GradientDescent()
 
-		start_algorithmic = time.time()
-		time_new, weights = gradient_descent.sgd_algorithmic(X_train, y_train, eta, weights)
-		time_new_whole = time.time() - start_algorithmic
+		start = time.time()
+		time_new, weights = gradient_descent.sgd_multiclass(X_train, y_train, eta, weights)
+		time_new_whole = time.time() - start
 
-		time_new = times_sgd_algorithmic[i-1] + time_new
-		times_sgd_algorithmic.append(time_new)
-
-		time_new_whole = times_sgd_algorithmic_whole[i-1] + time_new_whole
-		times_sgd_algorithmic_whole.append(time_new_whole)
+		time_new = times_sgd[i-1] + time_new
+		times_sgd.append(time_new)
 
 		accuracy = accuracy_test(X_test, y_test, weights)
 		accuracies.append(accuracy)
@@ -262,8 +221,8 @@ if __name__ == '__main__':
                         eta0=0.01, 
 						learning_rate='constant')
 
-	# param_range = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-	param_range = range(1, 100)
+	param_range = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+	# param_range = range(1, 10)
 
 	times = [] 
 	train_scores = [] 
@@ -282,9 +241,9 @@ if __name__ == '__main__':
 
 	#plot
 	plt.subplot(2, 1, 1)
-	plt.title('SGD algorithmic times')
+	plt.title('SGD multiclass times')
 	sizes = np.array(range(0, epochs))
-	plt.plot(sizes, times_sgd_algorithmic_whole, 'g--', label='jx2181-parallel')
+	plt.plot(sizes, times_sgd, 'g--', label='jx2181-parallel')
 	plt.plot(param_range, times, 'b--', label='sklearn-serial')
 	plt.legend(loc='upper left')
 	plt.ylabel('run time (secs)')
@@ -292,16 +251,16 @@ if __name__ == '__main__':
 	plt.tight_layout()
 
 	plt.subplot(2, 1, 2)
-	plt.title('SGD algorithmic accuracies')
+	plt.title('SGD multiclass accuracies')
 	plt.plot(sizes, accuracies, 'g--', label='parallel')
 	plt.plot(param_range, test_scores, 'b--', label='sklearn-serial')
-	plt.ylim(0.89, 0.92)
+	plt.ylim(0.88, 0.925)
 	plt.xlabel('iteration')
 	plt.ylabel('accuracy')
 	plt.legend(loc='upper left')
 	plt.tight_layout()
 
 	plt.rcParams["figure.figsize"] = [8, 8]
-	plt.savefig('sgd_algorithmic_runtime.png')
+	plt.savefig('sgd_multiclass_1.png')
 
 	#plot side by size with benchmark

@@ -1,17 +1,15 @@
 #imports
 #essentials
 import numpy as np
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import time
 import tensorflow as tf
-
 
 #pycuda
 from pycuda import gpuarray
 import pycuda.driver as cuda
 from pycuda.compiler import SourceModule
 import pycuda.autoinit
-
 
 """Import MNIST Data"""
 from tensorflow.examples.tutorials.mnist import input_data
@@ -23,20 +21,20 @@ y_train = mnist.train.labels
 y_test = mnist.test.labels
 
 
-class GradientDescent: 
+class GradientDescent:
 	"""
-	Implementation of SGD with: 
+	Implementation of SGD with:
 		-fixed step size
 		-no early stopping
 		-logistic regression for MNIST data
 
-	Four Modes: 
+	Four Modes:
 		-algorithmic
 		-batch
 		-multiclass
 		-Hogwild!
 
-	TODO: 
+	TODO:
 		1. add intercept
 		2. add tree based consolidation
 		3. run and verify
@@ -51,117 +49,123 @@ class GradientDescent:
 	    {
 
 	    //initialize -------------
-	    int tx = threadIdx.x; 
-	    int bx = blockDimx * blockIdx.x + tx; 
-	    const int data_rows = rows; 
-	    const in data_dimension = 784; 
-
-	    //I think a loop needs to be here 
-	    //==> 
-	    //put weights in shared memory ----------
-	    __shared__ float weight_shared[10][data_dimension]; 
-	    __shared__ float temp_dot_product[10][data_dimension]; 
-	    __shared__ float y_hat[10]; 
+	    int tx = threadIdx.x;
+	    int bx = blockDimx * blockIdx.x + tx;
+	    const int data_rows = rows;
+	    const in data_dimension = 784;
 
 	    for (int i = 0; i<10; i++){
 	    	if (tx < data_dimension){
-	    		weight_shared[i][tx] = weights[i*data_dimension + tx]; 
+	    		weight_shared[i][tx] = weights[i*data_dimension + tx];
 	    	}
-	    	__syncthreads(); 
-	    }
-	    __syncthreads(); 
-
-	    // calculate dot product for each class
-	    // do addition with tree struction
-	    for (int j = 0; j<10; j++){
-	    	if (tx < data_dimension) {
-	    		temp_dot_product = weight_shared[j][tx] * X_train[bx];  //check this is right
-	    	}
-	    	__syncthreads(); 
-	    }
-	    __syncthreads(); 
-
-	    for (int j = 0; j<10; j++){
-		    for (int maximum = blockDim.x; maximum>0; maximum = (maximum+1)/2){
-		    	if (tx <= maximum/2 && (2*tx+1) <= maximum){
-		    		temp_dot_product[j][tx] = temp_dot_product[j][2*tx] + temp_dot_product[j][2*tx+1];  
-		    	}
-		    	__syncthreads(); 
-		    	if (tx <= maximum/2 && (2*tx+1) = maximum){
-		    		temp_dot_product[j][tx] = temp_dot_product[j][2*tx]
-		    	}
-		    	__syncthreads(); 
-		    }
-		    __syncthreads(); 
 		}
-		__syncthreads(); 
+		    __syncthreads();
 
-	    //we have the dot product of 
-	    //sgd formula
-	    float e = 2.718281828459;
-	    if (tx = 0){
-	    	for (int k = 0; k<10; k++){
+	    //I think a loop needs to be here
+	    //==>
+	    for (int data=0; data<data_rows; data++){
+	    	int X_beginning = data * data_dimension;
+	    	int y_beginning = data;
 
-	    		//current y_train
-		    	int current_y_train_index = blockIdx.x; 
-		    	float current_y_train = y_train[current_y_train_index];
+		    //put weights in shared memory ----------
+		    __shared__ float weight_shared[10][data_dimension];
+		    __shared__ float temp_dot_product[10][data_dimension];
+		    __shared__ float y_hat[10];
+		    __shared__ float coefficients[10];
 
-		    	//convert to 0/1
-		    	if (current_y_train == k){
-		    		float y_star = 1; 
+		    // calculate dot product for each class
+		    // do addition with tree struction
+		    for (int j = 0; j<10; j++){
+		    	if (tx < data_dimension) {
+		    		temp_dot_product = weight_shared[j][tx] * X_train[X_beginning+tx];  //check this is right
 		    	}
-		    	if (current_y_train != k){
-		    		float y_star = 0; 
-		    	}
+		  	}
+		    __syncthreads();
 
-		    	//get y_hat 
-		    	y_hat[j] = 1/(1+powf(e, -1*temp_dot_product[k][tx])); 
+		    for (int j = 0; j<10; j++){
+			    for (int maximum = blockDim.x; maximum>0; maximum = (maximum+1)/2){
+			    	if (tx <= maximum/2 && (2*tx+1) <= maximum){
+			    		temp_dot_product[j][tx] = temp_dot_product[j][2*tx] + temp_dot_product[j][2*tx+1];
+			    	}
+			    	__syncthreads();
+			    	if (tx <= maximum/2 && (2*tx+1) = maximum){
+			    		temp_dot_product[j][tx] = temp_dot_product[j][2*tx];
+			    	}
+			    }
+			}
+			__syncthreads();
+
+		    //we have the dot product of
+		    //sgd formula
+		    float e = 2.718281828459;
+		    if (tx = 0){
+		    	for (int k = 0; k<10; k++){
+
+		    		//current y_train
+			    	float current_y_train = y_train[y_beginning];
+
+			    	//convert to 0/1
+			    	if (current_y_train == k){
+			    		float y_star = 1;
+			    	}
+			    	if (current_y_train != k){
+			    		float y_star = 0;
+			    	}
+
+			    	//get y_hat
+			    	y_hat[j] = 1/(1+powf(e, -1*temp_dot_product[k][tx]));
+			    	coefficient[j] = eta * (y_star - y_hat[k])*y_hat[k]*(1-y_hat[k]);
+			    }
+
 		    }
 
-	    }
-
-	    //update weights 
-	    //double check this is correct
-	    
-
-
-
-
-
-	    }
-
-
+		    //update weights
+		    //double check this is correct
+		    for (int m = 0; m<10; m++){
+		    	if (tx < data_dimension){
+		    		weight_shared[m][tx] = weight_shared[m][tx] + coefficient[m]*X_train[X_beginning+tx]; //make sure bx is correct
+		    	}
+		    }
+		    __syncthreads();
+		}
+		//write weights back
+		for (int n = 0; n<10; n++){
+	    	if (tx < data_dimension){
+	    		weights[n*data_dimension + tx] = weight_shared[n][tx];
+	    	}
+		}
+	}
 
 	"""
 
 	prg_sgd_algorithmic = SourceModule(sgd_algorithmic_kernel_code)
 
-	def __init__(self): 
-    	self.X_train_gpu = None 
-    	self.y_train_gpu = None 
+	def __init__(self):
+		self.X_train_gpu = None
+    	self.y_train_gpu = None
 
-    def prepare_data(self, X_train, y_train): 
+    def prepare_data(self, X_train, y_train):
     	"""
-		creates X_train_gpu 
+		creates X_train_gpu
 		creates y_train_gpu
     	"""
-    	if self.X_train_gpu is None: 
-    		self.X_train_gpu = gpuarray.to_gpu(X_train) 
-    	if self.y_train_gpu is None: 
+    	if self.X_train_gpu is None:
+    		self.X_train_gpu = gpuarray.to_gpu(X_train)
+    	if self.y_train_gpu is None:
     		self.y_train_gpu = gpuarray.to_gpu(y_train)
 
-    def sgd_algorithmic(self, X_train, y_train, eta0, weights=None): 
+    def sgd_algorithmic(self, X_train, y_train, eta0, weights=None):
     	#get data size
     	rows = X_train.shape[0]
     	columns = X_train.shape[1]
     	print("row: ", row, "columns :", columns)
 
     	#initialize weight array (1-d array with size of columns)
-    	if weights is None: 
-	    	weights = (np.random.rand(10, columns)).astype(np.float32) 
-	    	weights_gpu = gpuarray.to_gpu(weights) 
+    	if weights is None:
+	    	weights = (np.random.rand(10, columns)).astype(np.float32)
+	    	weights_gpu = gpuarray.to_gpu(weights)
 	    	print("weights: ", weights)
-	    else: 
+	    else:
 	    	weights_gpu = gpuarray.to_gpu(weights)
 	    	print("weights taken from input")
 
@@ -182,30 +186,30 @@ class GradientDescent:
     	#timing event
     	evt = GradientDescent.prg_sgd_algorithmic.get_function("SGD_algorithmic")
 
-    	start = cuda.Event() 
-    	end = cuda.Event() 
+    	start = cuda.Event()
+    	end = cuda.Event()
 
-    	start.record() 
+    	start.record()
     	evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, eta0, rows, block=(columns, 1, 1))
-    	end.record() 
-    	end.synchronize() 
+    	end.record()
+    	end.synchronize()
 
-    	time = start.time_till(end)*1e-3 #get units 
-    	final_weights = weights_gpu.get() 
+    	time = start.time_till(end)*1e-3 #get units
+    	final_weights = weights_gpu.get()
     	return time, final_weights
 
 """
 Accuracy Testing
 """
 
-def accuracy_test(test_data, test_label, weights): 
-	accuracy = 0 
-	#weights is size columns x 10 
+def accuracy_test(test_data, test_label, weights):
+	accuracy = 0
+	#weights is size columns x 10
 	prediction_matrix = np.matmul(test_data, weights)
 	predictions = np.argmax(prediction_matrix, axis=1)
-	accuracy = 1 - np.count_nonzero(test_label - predictions)/len(test_label) 
+	accuracy = 1 - np.count_nonzero(test_label - predictions)/len(test_label)
 	print("accuracy: ", accuracy)
-	return accuracy 
+	return accuracy
 
 """
 Testing and Plotting
@@ -218,16 +222,16 @@ if __name__ == '__main__':
     times_sgd_algorithmic_whole = [0]
     accuracies = [0]
 
-    i = 1 
-    while i < 100: 
+    i = 1
+    while i < 100:
     	#find times and accuracies for 99 epoches for sgd_algorithmic
-    	gradient_descent = GradientDescent() 
+    	gradient_descent = GradientDescent()
 
-    	start_algorithmic = time.time() 
+    	start_algorithmic = time.time()
     	time_new, weights = gradient_descent.sgd_algorithmic(X_train, y_train, weights)
     	time_new_whole = time.time() - start_algorithmic
 
-    	time_new = times_sgd_algorithmic[i-1] + time_new 
+    	time_new = times_sgd_algorithmic[i-1] + time_new
     	times_sgd_algorithmic.append(time_new)
 
     	time_new_whole = times_sgd_algorithmic_whole[i-1] + time_new_whole
@@ -236,9 +240,9 @@ if __name__ == '__main__':
     	accuracy = accuracy_test(X_test, y_test, weights)
     	accuracies.append(accuracy)
 
-    	i += 1 
+    	i += 1
 
-    #plot 
+    #plot
     plt.subplot(2, 1, 1)
     plt.title('SGD algorithmic times')
     sizes = np.array(range(1, 100))
@@ -256,9 +260,3 @@ if __name__ == '__main__':
     plt.savefig('sgd_algorithmic_runtime.png')
 
     #plot side by size with benchmark
-
-
-
-
-
-

@@ -51,16 +51,14 @@ class GradientDescent:
 
 		//initialize -------------
 		int tx = threadIdx.x;
-		//int bx = blockDim.x * blockIdx.x + tx;
+		int bx = blockDim.x * blockIdx.x + tx;
 		const int data_rows = rows;
 		const int data_dimension = 784;
 		float e = 2.718281828459;
 
+		printf("%d", blockIdx.x); 
 		//put weights in shared memory ----------
 		__shared__ float weight_shared[10][data_dimension];
-		__shared__ float temp_dot_product[data_dimension];
-		__shared__ float y_hat[10];
-		__shared__ float coefficients[10];
 
 		for (int i = 0; i<10; i++){
 			if (tx < data_dimension){
@@ -69,73 +67,37 @@ class GradientDescent:
 		}
 		__syncthreads();
 
-		//loop==>
-		for (int data=0; data<data_rows; data++){
-			int X_beginning = data * data_dimension;
+		// calculate dot product for each class
+		// 10 threads for 10 classes
+		// tx should be between 0 and 9
+		// not truly random since you can't call rand() inside pycuda kernel
 
-			// calculate dot product for each class
-			// do addition with tree struction
-			for (int j = 0; j<10; j++){
-				int random_max = rand()%20 + 10; 
-				for (int k = 0; k<random_max; k++){
-					int current_random = rand()%784; 
-					if (tx == current_random){_
-
-				}
-
-
-				if (tx < data_dimension) {
-					temp_dot_product[tx] = weight_shared[j][tx] * X_train[X_beginning+tx];  //check this is right
-				}
-				__syncthreads(); 
-
-				for (int maximum = blockDim.x; maximum>1; maximum = (maximum+1)/2){
-					if (tx <= maximum/2 && (2*tx+1) <= maximum){
-						temp_dot_product[tx] = temp_dot_product[2*tx] + temp_dot_product[2*tx+1];
-					}
-					__syncthreads();
-					if (tx <= maximum/2 && (2*tx+1) == maximum){
-						temp_dot_product[tx] = temp_dot_product[2*tx];
-					}
-					__syncthreads();
-				}
-
-				int y_star = 1;
-				
-				//current y_train
-				int current_y_train = y_train[data];
-
-				//convert to 0/1
-				if (current_y_train != j){ //error here
-					y_star = 0;
-				}
-
-				//get y_hat
-				y_hat[j] = 1.0/(1.0+powf(e, (-1.0*temp_dot_product[0])) ); 
-				coefficients[j] = eta * (y_star - y_hat[j])*y_hat[j]*(1.0-y_hat[j]); //enum type 
-				
-				if (tx < 5 && data<5){
-					//printf("%d, %d, %d, %d, %d, %d \\n", y_train[0], y_train[1], y_train[2], y_train[3], y_train[4], y_train[5]); 
-					//printf("y_train: %d, j: %d, y_star: %d, y_hat, %f, coefficient: %f \\n|", current_y_train, j, y_star, y_hat[j], coefficients[j]);
-				}	
-
-				if (tx < data_dimension){
-					weight_shared[j][tx] = weight_shared[j][tx] + coefficients[j]*X_train[X_beginning+tx]; 
-					
-					/* coefficients are really small
-					if (tx < 10){
-						if (coefficients[j]>0){
-							printf("%f, %f |", coefficients[j], X_train[X_beginning+tx]);
-						}
-					}	
-					*/
-				}
-				__syncthreads(); 
-			}
-			__syncthreads();
-
-		//================================
+		float temp_dot_product = 0.0; 
+		int rand_array[20]; 
+		for (int i=0; i<20; i++){
+			int rand_temp = (bx * 9239 + i) % 784;   
+			rand_array[i] = rand_temp; 
+			temp_dot_product += weight_shared[tx][rand_temp] * X_train[blockDim.x * blockIdx.x + rand_temp]; 
 		}
+
+		int y_star = 1; 
+		int current_y_train = y_train[blockIdx.x]; 
+		if (current_y_train != tx){ 
+			y_star = 0;
+		}
+
+		//get y_hat 
+		float y_hat = 1.0/(1.0+powf(e, (-1.0*temp_dot_product)));
+
+		//get coefficient
+		float coefficients = eta * (y_star - y_hat)*y_hat*(1.0-y_hat);
+
+		for (int i=0; i<20; i++){
+			int rand_curr = rand_array[i]; 
+			weight_shared[tx][i] += coefficients * X_train[blockDim.x * blockIdx.x+rand_curr]; 
+		}
+		__syncthreads(); 
+
 		//write weights back
 		for (int n = 0; n<10; n++){
 			if (tx < data_dimension){
@@ -160,7 +122,7 @@ class GradientDescent:
 
 	def sgd_lockfree(self, X_train, y_train, eta0, weights=None):
 		#get data size
-		rows = np.int32(X_train.shape[0])
+		rows = X_train.shape[0]
 		columns = X_train.shape[1]
 		# print("row: ", rows, "columns :", columns)
 
@@ -196,9 +158,9 @@ class GradientDescent:
 		end = cuda.Event()
 
 		start.record()
-		evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, output_gpu, 
-			eta0, rows, 
-			block=(10, 1, 1))
+		evt(self.X_train_gpu, self.y_train_gpu, weights_gpu, output_gpu, eta0, rows, 
+			block=(10, 1, 1), 
+			grid=(55000, 1, 1))
 		end.record()
 		end.synchronize()
 
@@ -229,7 +191,7 @@ Testing and Plotting
 
 if __name__ == '__main__':
 	#parameters
-	epochs = 100
+	epochs = 10
 	eta = np.float32(0.01) 
 
 	columns = int(X_train.shape[1])
@@ -267,7 +229,7 @@ if __name__ == '__main__':
 						learning_rate='constant')
 
 	# param_range = [1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-	param_range = range(1, 100)
+	param_range = range(1, 10)
 
 	times = [] 
 	train_scores = [] 
@@ -299,7 +261,7 @@ if __name__ == '__main__':
 	plt.title('SGD lockffree accuracies')
 	plt.plot(sizes, accuracies, 'g--', label='parallel')
 	plt.plot(param_range, test_scores, 'b--', label='sklearn-serial')
-	plt.ylim(0.89, 0.92)
+	plt.ylim(0.89, 0.925)
 	plt.xlabel('iteration')
 	plt.ylabel('accuracy')
 	plt.legend(loc='upper left')
